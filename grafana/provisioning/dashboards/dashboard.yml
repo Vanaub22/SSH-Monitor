@@ -1,0 +1,16 @@
+# Grafana Auto-Provisioning: Dashboard provider
+# Tells Grafana to load dashboards from /var/lib/grafana/dashboards on startup.
+
+apiVersion: 1
+
+providers:
+  - name: "SSH Security Dashboards"
+    orgId: 1
+    folder: "SSH Monitoring"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

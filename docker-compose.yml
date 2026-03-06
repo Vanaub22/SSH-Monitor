@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker Compose – SSH Security Monitoring System
+#
+# Services:
+#   cpp-parser       – C++ auth.log parser  (writes JSON to shared volume)
+#   python-exporter  – Python Prometheus exporter (reads JSON, serves :9101)
+#   prometheus       – Metrics store & alerting
+#   grafana          – Dashboards & visualization
+# ─────────────────────────────────────────────────────────────────────────────
+
+volumes:
+  shared-data:        # JSON bridge between C++ and Python services
+  prometheus-data:    # Persistent Prometheus TSDB
+  grafana-data:       # Persistent Grafana DB
+
+services:
+  # ── C++ Log Parser ────────────────────────────────────────────────────────
+  cpp-parser:
+    build:
+      context: ./cpp-parser
+      dockerfile: Dockerfile
+    container_name: ssh-cpp-parser
+    restart: unless-stopped
+    volumes:
+      # Mount host auth.log (read-only) into the container
+      - /var/log/auth.log:/var/log/auth.log:ro
+      # Shared volume for JSON output
+      - shared-data:/shared
+    command: ["--log", "/var/log/auth.log", "--out", "/shared/ssh_metrics.json"]
+
+  # ── Python Prometheus Exporter ────────────────────────────────────────────
+  python-exporter:
+    build:
+      context: ./python-exporter
+      dockerfile: Dockerfile
+    container_name: ssh-python-exporter
+    restart: unless-stopped
+    ports:
+      - "9101:9101"
+    environment:
+      METRICS_FILE: /shared/ssh_metrics.json
+      EXPORTER_PORT: "9101"
+      POLL_INTERVAL: "1.0"
+      ALERT_THRESHOLD: "10"          # failures/min before alert fires
+    volumes:
+      - shared-data:/shared:ro
+    depends_on:
+      - cpp-parser
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: ssh-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    depends_on:
+      - python-exporter
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: ssh-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ssh_monitoring.json
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/provisioning/dashboards/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus

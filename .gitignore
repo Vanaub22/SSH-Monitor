@@ -1,0 +1,23 @@
+# Build artifacts
+cpp-parser/build/
+*.o
+*.d
+
+# Python
+python-exporter/venv/
+python-exporter/__pycache__/
+*.pyc
+
+# Docker volumes (runtime data)
+shared/ssh_metrics.json
+shared/ssh_metrics.json.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~

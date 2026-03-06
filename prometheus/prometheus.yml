@@ -1,0 +1,25 @@
+# Prometheus Configuration for SSH Security Monitoring
+# Scrapes the Python exporter every 5 seconds.
+
+global:
+  scrape_interval: 5s        # How often to scrape targets
+  evaluation_interval: 5s    # How often to evaluate rules
+
+# ── Alert Rules ───────────────────────────────────────────────────────────────
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+# ── Scrape Targets ────────────────────────────────────────────────────────────
+scrape_configs:
+  # Python SSH metrics exporter
+  - job_name: "ssh_exporter"
+    static_configs:
+      - targets: ["python-exporter:9101"]
+        labels:
+          service: "ssh-monitor"
+          env: "production"
+
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

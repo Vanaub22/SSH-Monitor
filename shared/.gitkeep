@@ -1,0 +1,3 @@
+# Placeholder to ensure the shared/ directory is tracked by Git.
+# At runtime, the C++ parser writes ssh_metrics.json here and
+# the Python exporter reads it (via a Docker shared volume).

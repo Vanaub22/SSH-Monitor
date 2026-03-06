@@ -1,0 +1,58 @@
+# Alert Rules for SSH Security Monitoring
+#
+# These rules fire when anomalous SSH activity is detected.
+# The threshold is configurable via the ALERT_THRESHOLD env var
+# in the Python exporter, but Prometheus also evaluates independently.
+
+groups:
+  - name: ssh_security_alerts
+    interval: 10s
+    rules:
+
+      # ── High Failure Rate ─────────────────────────────────────────────
+      - alert: HighSSHFailureRate
+        expr: ssh_failures_per_minute > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High SSH failure rate detected"
+          description: >
+            SSH failures per minute is {{ $value }}, which exceeds the
+            threshold of 10. This may indicate a brute-force attack.
+
+      # ── Critical Failure Rate ──────────────────────────────────────────
+      - alert: CriticalSSHFailureRate
+        expr: ssh_failures_per_minute > 50
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical SSH failure rate – possible brute-force attack"
+          description: >
+            SSH failures per minute is {{ $value }} (>50). Immediate
+            investigation recommended. Consider blocking source IPs.
+
+      # ── Exporter Down ──────────────────────────────────────────────────
+      - alert: SSHExporterDown
+        expr: up{job="ssh_exporter"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "SSH metrics exporter is unreachable"
+          description: >
+            The Python SSH exporter has been down for more than 30 seconds.
+            Metrics are not being collected.
+
+      # ── Elevated Moving Average ────────────────────────────────────────
+      - alert: ElevatedSSHFailureAverage
+        expr: ssh_failures_moving_avg_5m > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained elevated SSH failure rate"
+          description: >
+            The 5-minute moving average of SSH failures per minute is
+            {{ $value }}, indicating sustained suspicious activity.
