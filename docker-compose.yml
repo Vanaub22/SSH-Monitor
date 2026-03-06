@@ -9,24 +9,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 volumes:
-  shared-data:        # JSON bridge between C++ and Python services
   prometheus-data:    # Persistent Prometheus TSDB
   grafana-data:       # Persistent Grafana DB
+  # NOTE: shared-data is now mounted as a bind mount to a local directory
+  # so the host-based C++ parser can write to it
 
 services:
   # ── C++ Log Parser ────────────────────────────────────────────────────────
-  cpp-parser:
-    build:
-      context: ./cpp-parser
-      dockerfile: Dockerfile
-    container_name: ssh-cpp-parser
-    restart: unless-stopped
-    volumes:
-      # Mount host auth.log (read-only) into the container
-      - /var/log/auth.log:/var/log/auth.log:ro
-      # Shared volume for JSON output
-      - shared-data:/shared
-    command: ["--log", "/var/log/auth.log", "--out", "/shared/ssh_metrics.json"]
+  # NOTE: The C++ parser runs on the HOST MACHINE (not in Docker) to avoid
+  # Docker Desktop macOS file mount issues. See README.md for setup instructions.
+  #
+  # To run the parser on the host:
+  #   ./cpp-parser/build/ssh_parser --log /var/log/system.log --out ./shared/ssh_metrics.json
+  #
+  # Or use the provided launch script (if available in scripts/)
 
   # ── Python Prometheus Exporter ────────────────────────────────────────────
   python-exporter:
@@ -43,9 +39,9 @@ services:
       POLL_INTERVAL: "1.0"
       ALERT_THRESHOLD: "10"          # failures/min before alert fires
     volumes:
-      - shared-data:/shared:ro
-    depends_on:
-      - cpp-parser
+      # Bind mount to shared directory on host for metrics file access
+      - ./shared:/shared:ro
+    depends_on: []
 
   # ── Prometheus ────────────────────────────────────────────────────────────
   prometheus:

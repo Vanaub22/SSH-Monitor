@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# simulate_attack.sh – Generate fake SSH auth.log entries for testing
+# simulate_attack.sh – Generate fake SSH log entries for testing
 #
 # This script appends realistic-looking failed and successful SSH login lines
-# to /var/log/auth.log (or a custom path) so the C++ parser has data to ingest.
+# to the SSH auth log so the C++ parser has data to ingest.
+# Supports both Linux (/var/log/auth.log) and macOS (/var/log/system.log).
 #
 # Usage:
-#   sudo ./simulate_attack.sh                     # default: /var/log/auth.log
+#   sudo ./simulate_attack.sh                     # auto-detect OS (default)
 #   sudo ./simulate_attack.sh /tmp/test_auth.log  # custom path
 #
-# ⚠  Requires root/sudo to write to /var/log/auth.log
+# ⚠  Requires root/sudo to write to system log files
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-LOG_FILE="${1:-/var/log/auth.log}"
+# ── Auto-detect OS and set default log path ─────────────────────────────────
+if [ -z "${1:-}" ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        LOG_FILE="/var/log/system.log"
+    else
+        LOG_FILE="/var/log/auth.log"
+    fi
+else
+    LOG_FILE="$1"
+fi
 
 # ── Fake attacker IPs ────────────────────────────────────────────────────────
 ATTACKER_IPS=(

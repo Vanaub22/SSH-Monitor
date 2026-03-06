@@ -1,8 +1,8 @@
 /**
  * main.cpp - SSH Log Parser (C++ Service)
  *
- * High-performance auth.log parser that:
- *   1. Tails /var/log/auth.log using ifstream + getline (streaming I/O).
+ * High-performance SSH authentication log parser that:
+ *   1. Tails SSH auth logs (/var/log/auth.log on Linux, /var/log/system.log on macOS)
  *   2. Identifies failed and successful SSH login attempts via regex.
  *   3. Maintains per-IP failure counts in an unordered_map (O(1) avg).
  *   4. Aggregates failures per minute using time-bucket keys.
@@ -13,7 +13,7 @@
  * Build:
  *   mkdir build && cd build && cmake .. && make
  *
- * Run:
+ * Run (auto-detects OS):
  *   ./ssh_parser [--log /var/log/auth.log] [--out /shared/ssh_metrics.json]
  */
 
@@ -32,10 +32,34 @@
 #include <cstdlib>
 #include <mutex>
 #include <atomic>
+#include <sys/utsname.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+// ─── OS Detection ────────────────────────────────────────────────────────────
+
+/**
+ * Returns the platform-appropriate default SSH auth log path.
+ * - Linux (Ubuntu/Debian): /var/log/auth.log
+ * - macOS: /var/log/system.log
+ */
+std::string get_default_log_path() {
+    struct utsname buf;
+    if (uname(&buf) == 0) {
+        std::string sysname(buf.sysname);
+        if (sysname == "Darwin") {
+            // macOS uses system.log for syslog messages
+            return "/var/log/system.log";
+        }
+    }
+    // Default to Linux auth.log
+    return "/var/log/auth.log";
+}
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-static const std::string DEFAULT_LOG_PATH = "/var/log/auth.log";
+static const std::string DEFAULT_LOG_PATH = get_default_log_path();
 static const std::string DEFAULT_OUT_PATH = "/shared/ssh_metrics.json";
 static const int         REPORT_INTERVAL  = 1;  // seconds
 
@@ -203,50 +227,62 @@ std::string build_json() {
 // ─── Main Loop ───────────────────────────────────────────────────────────────
 
 void tail_and_parse(const std::string& log_path, const std::string& out_path) {
-    std::ifstream ifs(log_path);
-    if (!ifs.is_open()) {
+    // Use lower-level POSIX file operations for better tail-like behavior on macOS
+    int fd = open(log_path.c_str(), O_RDONLY);
+    if (fd < 0) {
         std::cerr << "[ssh_parser] WARNING: Cannot open " << log_path
                   << " – will retry...\n";
+        fd = -1;
     }
 
-    // Seek to end so we only process new lines (like tail -f)
-    if (ifs.is_open()) {
-        ifs.seekg(0, std::ios::end);
+    // Seek to end
+    if (fd >= 0) {
+        lseek(fd, 0, SEEK_END);
     }
 
     auto last_report = std::chrono::steady_clock::now();
-    std::string line;
+    std::string accumulated;  // Buffer for partial lines
+    char buffer[4096];
 
     std::cout << "[ssh_parser] Monitoring " << log_path << "\n";
     std::cout << "[ssh_parser] Writing JSON to " << out_path << "\n";
 
     while (g_running.load()) {
-        // Try to read new lines
-        if (ifs.is_open()) {
-            while (std::getline(ifs, line)) {
-                bool is_failure = false;
-                if (is_ssh_event(line, is_failure)) {
-                    std::string ip   = extract_ip(line);
-                    std::string user = extract_username(line);
-                    record_event(is_failure, ip);
+        // Try to read new data
+        if (fd >= 0) {
+            ssize_t bytes_read = read(fd, buffer, sizeof(buffer));
+            if (bytes_read > 0) {
+                accumulated.append(buffer, bytes_read);
+                
+                // Process complete lines
+                size_t pos = 0;
+                while ((pos = accumulated.find('\n')) != std::string::npos) {
+                    std::string line = accumulated.substr(0, pos);
+                    accumulated.erase(0, pos + 1);
+                    
+                    bool is_failure = false;
+                    if (is_ssh_event(line, is_failure)) {
+                        std::string ip   = extract_ip(line);
+                        std::string user = extract_username(line);
+                        record_event(is_failure, ip);
 
-                    // Console log for visibility
-                    std::cout << "[ssh_parser] "
-                              << (is_failure ? "FAIL" : " OK ")
-                              << " ip=" << (ip.empty() ? "?" : ip)
-                              << " user=" << user << "\n";
+                        // Console log for visibility
+                        std::cout << "[ssh_parser] "
+                                  << (is_failure ? "FAIL" : " OK ")
+                                  << " ip=" << (ip.empty() ? "?" : ip)
+                                  << " user=" << user << "\n";
+                    }
                 }
-            }
-
-            // Clear EOF so we can keep reading as the file grows
-            if (ifs.eof()) {
-                ifs.clear();
+            } else if (bytes_read < 0) {
+                // Error reading; close and retry
+                close(fd);
+                fd = -1;
             }
         } else {
             // Retry opening the file
-            ifs.open(log_path);
-            if (ifs.is_open()) {
-                ifs.seekg(0, std::ios::end);
+            fd = open(log_path.c_str(), O_RDONLY);
+            if (fd >= 0) {
+                lseek(fd, 0, SEEK_END);
                 std::cout << "[ssh_parser] Opened " << log_path << "\n";
             }
         }
@@ -262,13 +298,16 @@ void tail_and_parse(const std::string& log_path, const std::string& out_path) {
             // Atomic write: write to .tmp then rename
             std::string tmp_path = out_path + ".tmp";
             {
-                std::ofstream ofs(tmp_path, std::ios::trunc);
-                if (ofs.is_open()) {
-                    ofs << json;
-                    ofs.flush();
+                int out_fd = open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (out_fd >= 0) {
+                    ssize_t written = write(out_fd, json.c_str(), json.length());
+                    if (written > 0) {
+                        fsync(out_fd);
+                    }
+                    close(out_fd);
                 }
             }
-            std::rename(tmp_path.c_str(), out_path.c_str());
+            rename(tmp_path.c_str(), out_path.c_str());
 
             last_report = now;
         }
@@ -277,6 +316,9 @@ void tail_and_parse(const std::string& log_path, const std::string& out_path) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    if (fd >= 0) {
+        close(fd);
+    }
     std::cout << "[ssh_parser] Shutting down.\n";
 }
 
@@ -298,6 +340,12 @@ int main(int argc, char* argv[]) {
             out_path = argv[++i];
         else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: ssh_parser [--log PATH] [--out PATH]\n";
+            std::cout << "\nOptions:\n";
+            std::cout << "  --log, -l PATH    SSH auth log file path (auto-detected by OS)\n";
+            std::cout << "  --out, -o PATH    JSON output file path (default: /shared/ssh_metrics.json)\n";
+            std::cout << "\nPlatform defaults:\n";
+            std::cout << "  Linux:   /var/log/auth.log\n";
+            std::cout << "  macOS:   /var/log/system.log\n";
             return 0;
         }
     }

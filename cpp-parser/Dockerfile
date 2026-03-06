@@ -28,6 +28,6 @@ COPY --from=builder /app/build/ssh_parser /usr/local/bin/ssh_parser
 # Shared volume mount point for JSON output
 RUN mkdir -p /shared
 
-# Default: monitor auth.log and write metrics to /shared/ssh_metrics.json
+# Default: auto-detect OS and use appropriate auth log, write metrics to /shared/ssh_metrics.json
 ENTRYPOINT ["ssh_parser"]
-CMD ["--log", "/var/log/auth.log", "--out", "/shared/ssh_metrics.json"]
+CMD ["--out", "/shared/ssh_metrics.json"]
