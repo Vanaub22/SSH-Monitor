@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beginner-ssh-monitor"
+version = "2.0.0"
+description = "A beginner-friendly local dashboard for SSH sign-in activity"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "SSH Monitor contributors" }]
+dependencies = []
+
+[project.scripts]
+ssh-monitor = "ssh_monitor.__main__:main"
+
+[tool.setuptools.package-data]
+ssh_monitor = ["web/*.html"]
+
+[tool.setuptools.packages.find]
+include = ["ssh_monitor*"]

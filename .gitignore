@@ -1,23 +1,25 @@
-# Build artifacts
-cpp-parser/build/
-*.o
-*.d
+# Python runtime and tool output
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
 
-# Python
-python-exporter/venv/
-python-exporter/__pycache__/
-*.pyc
+# Local configuration and collected log data
+.env
+data/*
+!data/ssh.log
+shared/
 
-# Docker volumes (runtime data)
-shared/ssh_metrics.json
-shared/ssh_metrics.json.tmp
-
-# OS
+# Editor and operating system files
 .DS_Store
 Thumbs.db
-
-# IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *~
